@@ -1,0 +1,4 @@
+<launch>
+  <node pkg="ros-peripherals" type="ros_peripherals_sonar" name="ros_peripherals_sonar"/>
+</launch>
+

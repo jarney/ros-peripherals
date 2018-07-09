@@ -1,0 +1,315 @@
+/*
+ * Ros-friendly firmware for an array of 5 HC-SD04
+ * sonar sensors.
+ * (c) 2018 Ensor Robotics, Jonathan S. Arney
+ * All Rights Reserved
+ */
+
+#include <ArduinoJson.h>
+
+// TODO:
+// * Place correct location and orientation
+//   based on device's origin coordinate system.
+// * Final acceptance test and assembly.
+// * Write ROS driver software and deploy to PI.
+// * Check whole thing into GitHub and upload designs to thingiverse.
+// * Make a spare one and send to Ubiquity team.
+
+
+class SonarDevice {
+  private:
+    int mTrigger;
+    int mEcho;
+  public:
+    SonarDevice(int trigger, int echo);
+    void setup();
+    float read();
+};
+
+SonarDevice::SonarDevice(int trigger, int echo) {
+    mTrigger = trigger;
+    mEcho = echo;
+}
+
+void SonarDevice::setup() {
+  pinMode(mTrigger, OUTPUT);
+  pinMode(mEcho, INPUT_PULLUP);
+}
+
+float SonarDevice::read() {
+    // The sensor is triggered by a HIGH pulse of 10 or more microseconds.
+  // Give a short LOW pulse beforehand to ensure a clean HIGH pulse:
+  digitalWrite(mTrigger, LOW);
+  delayMicroseconds(5);
+  digitalWrite(mTrigger, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(mTrigger, LOW);
+
+  // Read the signal from the sensor: a HIGH pulse whose
+  // duration is the time (in microseconds) from the sending
+  // of the ping to the reception of its echo off of an object.
+  long duration = pulseIn(mEcho, HIGH);
+
+  // convert the time into a distance
+  // Duration/10 to get to the right units of time.
+  // Divide by 2 because sound goes round-trip
+  // for this type of sensor.
+  // Divide by 331.3 meters per second because that's the speed of sound.
+  // The result should be the distance in meters.
+  float m = duration / (2.0 * 10.0 *  331.3);
+  
+  return m;
+}
+
+SonarDevice sonar0(2,3);
+SonarDevice sonar1(4,5);
+SonarDevice sonar2(6,7);
+SonarDevice sonar3(8,9);
+SonarDevice sonar4(10,11);
+
+const int STATE_IDLE = 0;
+const int STATE_RUNNING = 1;
+
+int state = 0;
+
+boolean on;
+
+void setup() {
+  //Serial Port begin
+  Serial.begin (38400);
+  //Define inputs and outputs
+
+  sonar0.setup();
+  sonar1.setup();
+  sonar2.setup();
+  sonar3.setup();
+  sonar4.setup();
+
+  on=false;
+  
+}
+
+void loop()
+{
+
+  handle_serial();
+  
+  switch (state) {
+    case STATE_IDLE:
+      handle_idle();
+      break;
+    case STATE_RUNNING:
+      handle_running();
+      break;
+  }
+
+}
+
+
+typedef void (*msghandler_fn_t)(void);
+
+typedef struct {
+  const char *messageType;
+  msghandler_fn_t handle;
+} msghandler_t;
+
+char serial_buffer[128];
+int serial_buffer_ptr = 0;
+
+void handle_serial() {
+  
+  while (Serial.available() > 0) {
+    serial_buffer[serial_buffer_ptr] = Serial.read();
+    
+    if (serial_buffer[serial_buffer_ptr] == '\n') {
+      processBuffer(serial_buffer);
+      serial_buffer_ptr = 0;
+    }
+    else if (serial_buffer_ptr >= 128) {
+      serial_buffer_ptr = 0;
+    }
+    else {
+      serial_buffer_ptr++;
+    }
+  }
+}
+
+void processBuffer(char *serial_buffer) {
+  char *p = serial_buffer;
+  while (*p != '\n') {
+    p++;
+  }
+  *p = '\0';
+  
+  msghandler_fn_t handler = (msghandler_fn_t)NULL;
+  {
+    StaticJsonBuffer<512> jsonBuffer;
+    JsonObject& root = jsonBuffer.parseObject(serial_buffer);
+  
+    // Test if parsing succeeds.
+    if (!root.success()) {
+      writeError(String("Parse error, could not parse message, invalid JSON format."));
+      return;
+    }
+    handler = (msghandler_fn_t)getHandler(root);
+  }
+
+  handler();
+  
+}
+
+
+msghandler_t messageHandlers[] = {
+  {"device-discovery", handleDeviceDiscovery},
+  {"subscribe", handleSubscribe},
+  {"unsubscribe", handleUnsubscribe},
+  {NULL, NULL}
+};
+
+void handleSubscribe() {
+  state = STATE_RUNNING;
+}
+
+void handleUnsubscribe(){
+  state = STATE_IDLE;
+}
+
+void handleDDHeader() {
+  const char *msg = "{" 
+"\"msg\": \"device-information\","
+"\"components\": [";
+  Serial.print(msg);
+
+}
+void handleDDFooter() {
+  const char *msg =
+  "]"
+"}";
+  Serial.print(msg);
+}
+
+void handleDDDevice(const char*id, const char*loc, const char*orient) {
+    Serial.print("{");
+    Serial.print("\"id\":\"");
+    Serial.print(id);
+    Serial.print("\",");
+    Serial.print(
+        "\"type\": \"Range::ULTRASOUND\","
+        "\"field_of_view\": 0.42,"
+        "\"min_range\": 0.05,"
+        "\"max_range\": 4.2,"
+        );
+    Serial.print("\"location\": { \"pos\": ");
+        Serial.print(loc);
+        Serial.print(", \"orient\": ");
+        Serial.print(orient);
+    Serial.print("}");
+    Serial.print("}");
+}
+
+// This method sends the device description
+// payload back to the host.
+// We don't use the arduino json library
+// here because it takes way too much stack space to send this message
+// and we can just place the payload directly in code-space
+// since it's a fixed payload.
+void handleDeviceDiscovery() {
+
+  handleDDHeader();
+  handleDDDevice("0", "[0.2,1.24,4.2]", "[0, 0.24, 0.1, 0.2]");
+  Serial.print(",");
+  handleDDDevice("1", "[0.2,1.24,4.8]", "[0, 0.22, 0.7, 0.3]");
+  Serial.print(",");
+  handleDDDevice("2", "[0.2,1.24,4.1]", "[0, 0.24, 0.3, 0.4]");
+  Serial.print(",");
+  handleDDDevice("3", "[0.2,1.44,4.2]", "[0, 0.24, 0.2, 0.5]");
+  Serial.print(",");
+  handleDDDevice("4", "[0.2,1.29,4.2]", "[0, 0.24, 0.4, 0.6]");
+
+  handleDDFooter();
+  
+  Serial.println();
+}
+
+void handleError() {
+  String errormsg = String("Unknown command type");
+  writeError(errormsg);
+}
+
+void * getHandler(JsonObject& request) {
+  
+  JsonVariant msg = request["msg"];
+  if (!msg.success()) {
+    writeError("The 'msg' field is required");
+    return (void*)handleError;
+  }
+
+  msghandler_t *messageHandler = messageHandlers;
+  while (1) {
+    if (messageHandler->messageType == NULL) {
+      break;
+    }
+    if (strcmp(msg.as<char*>(), messageHandler->messageType) == 0) {
+      return (void*)messageHandler->handle;
+    }
+    messageHandler++;
+  }
+  return (void*)handleError;
+}
+
+
+
+void writeError(String msg) {
+
+  Serial.print("{\"msg\":\"");
+  Serial.print(msg);
+  Serial.print("\"}");
+  Serial.println();
+}
+
+
+void handle_idle() {
+}
+
+void handle_running() {
+
+    StaticJsonBuffer<512> jsonBuffer;
+    JsonObject& response = jsonBuffer.createObject();
+    response["msg"] = "sensor-data";
+    
+    JsonArray & sensorData = response.createNestedArray("sensor_data");
+    {
+      JsonObject & sensor0 = sensorData.createNestedObject();
+      sensor0["id"] = "0";
+      sensor0["range"] = sonar0.read();
+    }
+    {
+      JsonObject & sensor0 = sensorData.createNestedObject();
+      sensor0["id"] = "1";
+      sensor0["range"] = sonar1.read();
+    }
+    {
+      JsonObject & sensor0 = sensorData.createNestedObject();
+      sensor0["id"] = "2";
+      sensor0["range"] = sonar2.read();
+    }
+    {
+      JsonObject & sensor0 = sensorData.createNestedObject();
+      sensor0["id"] = "3";
+      sensor0["range"] = sonar3.read();
+    }
+    {
+      JsonObject & sensor0 = sensorData.createNestedObject();
+      sensor0["id"] = "4";
+      sensor0["range"] = sonar4.read();
+    }
+    
+
+    response.printTo(Serial);
+    Serial.println();
+    
+    delay(250);
+}
+
+
+
