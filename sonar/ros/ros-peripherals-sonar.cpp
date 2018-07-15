@@ -258,7 +258,10 @@ void SonarArray::write(boost::property_tree::ptree & tree) {
 
   //peripheral.write("\n");
   ROS_DEBUG(">> %s", msgstr.c_str());
-  ROS_INFO("wrotebytes = %ld ", wrotebytes);
+  // Format string is wrong for the below.
+  // We shouldn't use it until we figure out
+  // the correct type for all platforms.
+  //ROS_INFO("wrotebytes = %ld ", wrotebytes);
 }
 
 void SonarArray::unsubscribe(void)
