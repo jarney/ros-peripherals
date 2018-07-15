@@ -35,6 +35,8 @@
 #include <ros/ros.h>
 #include <serial/serial.h>
 #include <sensor_msgs/Range.h>
+#include <tf/tf.h>
+#include <tf2_ros/transform_broadcaster.h>
 
 #include <boost/algorithm/string.hpp>
 #include <boost/property_tree/ptree.hpp>
@@ -59,20 +61,14 @@ private:
   float m_min_range;
   float m_max_range;
   float m_field_of_view;
-  float m_loc_x;
-  float m_loc_y;
-  float m_loc_z;
-
-  float m_orient_x;
-  float m_orient_y;
-  float m_orient_z;
-  float m_orient_w;
+  geometry_msgs::Vector3 m_translation;
+  geometry_msgs::Quaternion m_rotation;
 
   std::string m_frame_id;
   ros::Publisher m_publisher;
 
 public:
-  Sonar(boost::property_tree::ptree & component_descriptor, ros::NodeHandle & nh);
+  Sonar(boost::property_tree::ptree & component_descriptor, ros::NodeHandle & nh, std::string attach_point);
 
   std::string & getId(void);
 
@@ -83,6 +79,9 @@ public:
   float getMaxRange(void);
   float getFieldOfView(void);
 
+
+  geometry_msgs::Vector3 & getTranslation();
+  geometry_msgs::Quaternion & getRotation();
 };
 
 std::string & Sonar::getId()
@@ -124,36 +123,58 @@ std::vector<T> as_vector(boost::property_tree::ptree const& pt, boost::property_
     return r;
 }
 
-Sonar::Sonar(boost::property_tree::ptree & component_descriptor, ros::NodeHandle &nh)
+geometry_msgs::Vector3 & Sonar::getTranslation()
+{
+    return m_translation;
+}
+
+geometry_msgs::Quaternion & Sonar::getRotation()
+{
+    return m_rotation;
+}
+
+Sonar::Sonar(boost::property_tree::ptree & component_descriptor, ros::NodeHandle &nh, std::string attachPoint)
 {
   m_id = component_descriptor.get<std::string>("id");
   m_min_range = component_descriptor.get<float>("min_range");
   m_max_range = component_descriptor.get<float>("max_range");
   m_field_of_view = component_descriptor.get<float>("field_of_view");
 
-/*
-  boost::property_tree::ptree loc = component_descriptor.get<boost::property_tree::ptree>("location");
+  boost::optional<boost::property_tree::ptree&> location = component_descriptor.get_child_optional("location");
 
-  std::vector<float> locv = as_vector<float>(loc, "pos");
-  std::vector<float> orientv = as_vector<float>(loc, "orient");
+  if (location) {
+      std::vector<float> location_pos = as_vector<float>(location.get(), "xyz");
+      if (location_pos.size() == 3) {
+          m_translation.x = location_pos.at(0);
+          m_translation.y = location_pos.at(1);
+          m_translation.z = location_pos.at(2);
+      }
+      // Euler angles, degrees.
+      // We need to (ultimately) convert these to
+      // Quaternions.
+      std::vector<float> location_orient = as_vector<float>(location.get(), "rpy");
+      if (location_orient.size() == 3) {
+          float r = location_orient.at(0) * TF2SIMD_RADS_PER_DEG;
+          float p = location_orient.at(1) * TF2SIMD_RADS_PER_DEG;
+          float y = location_orient.at(2) * TF2SIMD_RADS_PER_DEG;
 
-  m_loc_x = locv.at(0);
-  m_loc_y = locv.at(1);
-  m_loc_z = locv.at(2);
+          tf2::Quaternion q;
+          q.setRPY(r, p, y);
+          m_rotation.x = q.x();
+          m_rotation.y = q.y();
+          m_rotation.z = q.z();
+          m_rotation.w = q.w();
+      }
+  }
 
-  m_orient_x = orientv.at(0);
-  m_orient_y = orientv.at(1);
-  m_orient_z = orientv.at(2);
-  m_orient_w = orientv.at(3);
-*/
-
-  m_frame_id = str(boost::format{"sonar_%1%"} % m_id.c_str());
+  m_frame_id = str(boost::format{"%1%_sonar_%2%"} % attachPoint.c_str() % m_id.c_str());
   m_publisher = nh.advertise<sensor_msgs::Range>(m_frame_id, 1);
 }
 
 class SonarArray {
 private:
   ros::NodeHandle & m_nh;
+  std::string m_attach_point;
   serial::Serial peripheral;
   boost::property_tree::ptree msg_device_discovery;
   boost::property_tree::ptree msg_subscribe;
@@ -162,10 +183,12 @@ private:
   bool m_initialized;
 
   std::map<std::string, Sonar*> m_sonars;
+  std::vector<geometry_msgs::TransformStamped> tf_transforms;
+  tf2_ros::TransformBroadcaster transformBroadcaster;
 
 public:
 
-    SonarArray(std::string serialPort, int32_t baud_rate, ros::NodeHandle &nh);
+    SonarArray(std::string serialPort, int32_t baud_rate, ros::NodeHandle &nh, std::string attachPoint);
 
     boost::property_tree::ptree read(void);
 
@@ -177,6 +200,8 @@ public:
 
     bool initialized(void);
 
+    void broadcast(void);
+
     Sonar *get(std::string id);
 
 };
@@ -187,8 +212,9 @@ Sonar *SonarArray::get(std::string id)
   return m_sonars[id];
 }
 
-SonarArray::SonarArray(std::string serialPort, int32_t baud_rate, ros::NodeHandle &nh) 
+SonarArray::SonarArray(std::string serialPort, int32_t baud_rate, ros::NodeHandle &nh, std::string attachPoint)
   : peripheral(serialPort, baud_rate, serial::Timeout::simpleTimeout(5000)),
+    m_attach_point(attachPoint),
     m_nh(nh)
 {
   msg_device_discovery.put("msg", "device-discovery");
@@ -207,7 +233,7 @@ boost::property_tree::ptree SonarArray::read() {
     
   std::string response_str = peripheral.readline();
 
-  ROS_INFO("<< %s", response_str.c_str());
+  ROS_DEBUG("<< %s", response_str.c_str());
 
   std::stringstream ss;
   ss << response_str;
@@ -231,7 +257,7 @@ void SonarArray::write(boost::property_tree::ptree & tree) {
   size_t wrotebytes = peripheral.write(msgstr);
 
   //peripheral.write("\n");
-  ROS_INFO(">> %s", msgstr.c_str());
+  ROS_DEBUG(">> %s", msgstr.c_str());
   ROS_INFO("wrotebytes = %ld ", wrotebytes);
 }
 
@@ -269,12 +295,24 @@ void SonarArray::deviceDiscovery(void)
 
     
     BOOST_FOREACH(boost::property_tree::ptree::value_type &descriptor, deviceInfo.get_child("components")) {
-        Sonar *s = new Sonar(descriptor.second, m_nh);
-        m_sonars[s->getId()] = s;
-    }
+        Sonar *sonar = new Sonar(descriptor.second, m_nh, m_attach_point);
 
+        geometry_msgs::TransformStamped tf_transform;
+        tf_transform.header.frame_id = tf::resolve(std::string(""), m_attach_point);
+        tf_transform.child_frame_id = tf::resolve(std::string(""), sonar->getFrameId());
+        tf_transform.transform.translation = sonar->getTranslation();
+        tf_transform.transform.rotation = sonar->getRotation();
+        tf_transforms.push_back(tf_transform);
+
+        m_sonars[sonar->getId()] = sonar;
+    }
     m_initialized = true;
   }
+}
+
+void SonarArray::broadcast()
+{
+    transformBroadcaster.sendTransform(tf_transforms);
 }
 
 bool SonarArray::initialized()
@@ -282,33 +320,25 @@ bool SonarArray::initialized()
   return m_initialized;
 }
 
-typedef struct sensor_st {
-  std::string sonar_frame;
-  ros::Publisher sonar_pub;
-} sensor_t;
-
 int main(int argc, char *argv[])
 {
   ros::init(argc, argv, "ros_peripherals_sonar");
   ros::NodeHandle nh("~");
 
-  std::string defaultPort = std::string("/dev/ttyUSB0");
-
   std::string serialPort = getParamOrDefault(
                                nh,
-                               "ros_peripherals_sonar/serial_port",
-                               defaultPort);
+                               "/ros_peripherals_sonar/serial_port",
+                               std::string("/dev/ttyUSB0"));
 
+  std::string attachPoint = getParamOrDefault(
+                               nh,
+                               "/ros_peripherals_sonar/attach_point",
+                               std::string("ros_peripheral_1"));
 
-  // Setting this inconsistently with
-  // the firmware is always going to be wrong.
-  // Should this even be a parameter?  Probably not.
   int32_t baud_rate = (int32_t)38400;
-  //                  getParamOrDefault(nh,
-  //                        "ros_peripherals_sonar/serial_baud",
-  //                        (int32_t)38400);
 
-  SonarArray sonarArray(serialPort, baud_rate, nh);
+
+  SonarArray sonarArray(serialPort, baud_rate, nh, attachPoint);
 
   ROS_INFO("Starting ROS Sonar Module");
   ROS_INFO("Serial port set %s", serialPort.c_str());
@@ -332,14 +362,12 @@ int main(int argc, char *argv[])
   nh.param<double>("min_range", min_range, .05);
   nh.param<double>("max_range", max_range, 10);
 
-  ros::Publisher pub = nh.advertise<sensor_msgs::Range>("/sonars", 5);
+  ros::Publisher sonarsTopic = nh.advertise<sensor_msgs::Range>("/sonars", 5);
 
   ros::Rate rate(50);
 
   std::string sonar_frame;
   ros::Publisher sonar_pub;
-
-  std::list<sensor_t> sensor_list;
 
   ROS_INFO("ROS Peripheral Sonar Ready");
 
@@ -349,27 +377,40 @@ int main(int argc, char *argv[])
 
       boost::property_tree::ptree sonar_status_data = sonarArray.read();
 
-      BOOST_FOREACH(boost::property_tree::ptree::value_type &v, sonar_status_data.get_child("sensor_data")) {
+      boost::optional<boost::property_tree::ptree&> sensorData = sonar_status_data.get_child_optional("sensor_data");
+      if (sensorData) {
+        BOOST_FOREACH(boost::property_tree::ptree::value_type &v, sonar_status_data.get_child("sensor_data")) {
 
-        boost::property_tree::ptree & sonarData = v.second;
-
-        Sonar *sonar = sonarArray.get(sonarData.get<std::string>("id"));
-
-        sensor_msgs::Range msg;
-        msg.field_of_view = sonar->getFieldOfView();
-        msg.min_range = sonar->getMinRange();
-        msg.max_range = sonar->getMaxRange();
-        msg.radiation_type = sensor_msgs::Range::ULTRASOUND;
-        msg.range = sonarData.get<float>("range");
-        msg.header.stamp = ros::Time::now();
-        msg.header.frame_id = sonar->getFrameId();
-    
-        pub.publish(msg);
-        sonar->getPublisher().publish(msg);
-
-        ROS_INFO("Device information: %f", msg.range);
+          boost::property_tree::ptree & sonarData = v.second;
+  
+          Sonar *sonar = sonarArray.get(sonarData.get<std::string>("id"));
+  
+  
+          sensor_msgs::Range msg;
+          msg.field_of_view = sonar->getFieldOfView();
+          msg.min_range = sonar->getMinRange();
+          msg.max_range = sonar->getMaxRange();
+          msg.radiation_type = sensor_msgs::Range::ULTRASOUND;
+          msg.range = sonarData.get<float>("range");
+          msg.header.stamp = ros::Time::now();
+          msg.header.frame_id = sonar->getFrameId();
+      
+          sonarsTopic.publish(msg);
+          sonar->getPublisher().publish(msg);
+  
+  
+        }
+  
       }
+
+      if (i == 0) {
+          sonarArray.broadcast();
+      }
+      i++;
+      i = i % 10;
+
       rate.sleep();
+
   }
 
   return 0;

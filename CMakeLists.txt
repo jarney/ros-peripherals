@@ -8,6 +8,8 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   serial
   sensor_msgs
+  tf
+  tf2_ros
 )
 
 ###################################
@@ -15,7 +17,7 @@ find_package(catkin REQUIRED COMPONENTS
 ###################################
 
 catkin_package(
-   CATKIN_DEPENDS roscpp sensor_msgs 
+   CATKIN_DEPENDS roscpp sensor_msgs tf tf2_ros
 )
 
 ###########
@@ -30,7 +32,7 @@ include_directories(${catkin_INCLUDE_DIRS})
 add_executable(ros_peripherals_sonar sonar/ros/ros-peripherals-sonar.cpp)
 target_compile_options(ros_peripherals_sonar PRIVATE -std=c++11)
 target_link_libraries(ros_peripherals_sonar ${catkin_LIBRARIES}
-                      ${roscpp_LIBRARIES} pthread)
+                      ${roscpp_LIBRARIES} pthread ${tf_LIBRARIES} ${tf2_ros_LIBRARIES})
 
 #############
 ## Install ##

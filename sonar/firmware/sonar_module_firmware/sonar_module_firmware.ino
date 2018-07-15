@@ -14,7 +14,10 @@
 // * Write ROS driver software and deploy to PI.
 // * Check whole thing into GitHub and upload designs to thingiverse.
 // * Make a spare one and send to Ubiquity team.
-
+// Supported Messages:
+// {"msg":"subscribe"}
+// {"msg":"unsubscribe"}
+// {"msg":"device-discovery"}
 
 class SonarDevice {
   private:
@@ -48,7 +51,7 @@ float SonarDevice::read() {
   // Read the signal from the sensor: a HIGH pulse whose
   // duration is the time (in microseconds) from the sending
   // of the ping to the reception of its echo off of an object.
-  long duration = pulseIn(mEcho, HIGH);
+  long duration = pulseIn(mEcho, HIGH, 100000);
 
   // convert the time into a distance
   // Duration/10 to get to the right units of time.
@@ -177,6 +180,7 @@ void handleUnsubscribe(){
 void handleDDHeader() {
   const char *msg = "{" 
 "\"msg\": \"device-information\","
+"\"id\":\"4c4020ce-879f-11e8-9a94-a6cf71072f73\","
 "\"components\": [";
   Serial.print(msg);
 
@@ -199,10 +203,11 @@ void handleDDDevice(const char*id, const char*loc, const char*orient) {
         "\"min_range\": 0.05,"
         "\"max_range\": 4.2,"
         );
-    Serial.print("\"location\": { \"pos\": ");
+    Serial.print("\"location\": { \"xyz\": ");
         Serial.print(loc);
-        Serial.print(", \"orient\": ");
+        Serial.print(", \"rpy\": ");
         Serial.print(orient);
+        Serial.print(", \"orient_type\": \"euler_degrees\"");
     Serial.print("}");
     Serial.print("}");
 }
@@ -216,15 +221,15 @@ void handleDDDevice(const char*id, const char*loc, const char*orient) {
 void handleDeviceDiscovery() {
 
   handleDDHeader();
-  handleDDDevice("0", "[0.2,1.24,4.2]", "[0, 0.24, 0.1, 0.2]");
+  handleDDDevice("0", "[-0.104,0.025,-0.015]", "[10, 0, -90]");
   Serial.print(",");
-  handleDDDevice("1", "[0.2,1.24,4.8]", "[0, 0.22, 0.7, 0.3]");
+  handleDDDevice("1", "[-0.083,0.094,-0.015]", "[10, 0, -45]");
   Serial.print(",");
-  handleDDDevice("2", "[0.2,1.24,4.1]", "[0, 0.24, 0.3, 0.4]");
+  handleDDDevice("2", "[0, 0.097,-0.015]", "[0, 0, 0]");
   Serial.print(",");
-  handleDDDevice("3", "[0.2,1.44,4.2]", "[0, 0.24, 0.2, 0.5]");
+  handleDDDevice("3", "[0.070,0.094,-0.015]", "[10, 0, 45]");
   Serial.print(",");
-  handleDDDevice("4", "[0.2,1.29,4.2]", "[0, 0.24, 0.4, 0.6]");
+  handleDDDevice("4", "[0.108,0.025,-0.015]", "[10, 0.24, 90]");
 
   handleDDFooter();
   
@@ -269,6 +274,7 @@ void writeError(String msg) {
 
 
 void handle_idle() {
+    delay(500);
 }
 
 void handle_running() {
@@ -278,37 +284,42 @@ void handle_running() {
     response["msg"] = "sensor-data";
     
     JsonArray & sensorData = response.createNestedArray("sensor_data");
-    {
+    float f = sonar0.read();
+    if (f > 0.05) {
       JsonObject & sensor0 = sensorData.createNestedObject();
       sensor0["id"] = "0";
-      sensor0["range"] = sonar0.read();
+      sensor0["range"] = f;
     }
-    {
+    f = sonar1.read();
+    if (f > 0.05) {
       JsonObject & sensor0 = sensorData.createNestedObject();
       sensor0["id"] = "1";
-      sensor0["range"] = sonar1.read();
+      sensor0["range"] = f;
     }
-    {
+    f = sonar2.read();
+    if (f > 0.05) {
       JsonObject & sensor0 = sensorData.createNestedObject();
       sensor0["id"] = "2";
-      sensor0["range"] = sonar2.read();
+      sensor0["range"] = f;
     }
-    {
+    f = sonar3.read();
+    if (f > 0.05) {
       JsonObject & sensor0 = sensorData.createNestedObject();
       sensor0["id"] = "3";
-      sensor0["range"] = sonar3.read();
+      sensor0["range"] = f;
     }
-    {
+    f = sonar4.read();
+    if (f > 0.05) {
       JsonObject & sensor0 = sensorData.createNestedObject();
       sensor0["id"] = "4";
-      sensor0["range"] = sonar4.read();
+      sensor0["range"] = f;
     }
     
 
     response.printTo(Serial);
     Serial.println();
     
-    delay(250);
+    delay(50);
 }
 
 

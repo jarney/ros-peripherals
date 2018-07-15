@@ -1,4 +1,8 @@
 <launch>
-  <node pkg="ros-peripherals" type="ros_peripherals_sonar" name="ros_peripherals_sonar"/>
+  <node pkg="ros-peripherals" type="ros_peripherals_sonar" name="ros_peripherals_sonar">
+    // Location of sonar array
+    <param name="serial_port" value="/dev/ttyUSB0"/>
+    <param name="attach_point" value="ros_peripheral_1"/>
+  </node>
 </launch>
 
