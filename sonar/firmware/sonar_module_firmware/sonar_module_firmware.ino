@@ -6,69 +6,21 @@
  */
 
 #include <ArduinoJson.h>
+#include <NewPing.h>
 
-// TODO:
-// * Place correct location and orientation
-//   based on device's origin coordinate system.
-// * Final acceptance test and assembly.
-// * Write ROS driver software and deploy to PI.
-// * Check whole thing into GitHub and upload designs to thingiverse.
-// * Make a spare one and send to Ubiquity team.
+#define MAX_RANGE_METERS (1.5f)
+
+
 // Supported Messages:
 // {"msg":"subscribe"}
 // {"msg":"unsubscribe"}
 // {"msg":"device-discovery"}
 
-class SonarDevice {
-  private:
-    int mTrigger;
-    int mEcho;
-  public:
-    SonarDevice(int trigger, int echo);
-    void setup();
-    float read();
-};
-
-SonarDevice::SonarDevice(int trigger, int echo) {
-    mTrigger = trigger;
-    mEcho = echo;
-}
-
-void SonarDevice::setup() {
-  pinMode(mTrigger, OUTPUT);
-  pinMode(mEcho, INPUT_PULLUP);
-}
-
-float SonarDevice::read() {
-    // The sensor is triggered by a HIGH pulse of 10 or more microseconds.
-  // Give a short LOW pulse beforehand to ensure a clean HIGH pulse:
-  digitalWrite(mTrigger, LOW);
-  delayMicroseconds(5);
-  digitalWrite(mTrigger, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(mTrigger, LOW);
-
-  // Read the signal from the sensor: a HIGH pulse whose
-  // duration is the time (in microseconds) from the sending
-  // of the ping to the reception of its echo off of an object.
-  long duration = pulseIn(mEcho, HIGH, 100000);
-
-  // convert the time into a distance
-  // Duration/10 to get to the right units of time.
-  // Divide by 2 because sound goes round-trip
-  // for this type of sensor.
-  // Divide by 331.3 meters per second because that's the speed of sound.
-  // The result should be the distance in meters.
-  float m = duration / (2.0 * 10.0 *  331.3);
-  
-  return m;
-}
-
-SonarDevice sonar0(2,3);
-SonarDevice sonar1(4,5);
-SonarDevice sonar2(6,7);
-SonarDevice sonar3(8,9);
-SonarDevice sonar4(10,11);
+NewPing sonar0(2,3);
+NewPing sonar1(4,5);
+NewPing sonar2(6,7);
+NewPing sonar3(8,9);
+NewPing sonar4(10,11);
 
 const int STATE_IDLE = 0;
 const int STATE_RUNNING = 1;
@@ -81,12 +33,6 @@ void setup() {
   //Serial Port begin
   Serial.begin (38400);
   //Define inputs and outputs
-
-  sonar0.setup();
-  sonar1.setup();
-  sonar2.setup();
-  sonar3.setup();
-  sonar4.setup();
 
   on=false;
   
@@ -201,7 +147,7 @@ void handleDDDevice(const char*id, const char*loc, const char*orient) {
         "\"type\": \"Range::ULTRASOUND\","
         "\"field_of_view\": 0.42,"
         "\"min_range\": 0.05,"
-        "\"max_range\": 4.2,"
+        "\"max_range\": 1.5,"
         );
     Serial.print("\"location\": { \"xyz\": ");
         Serial.print(loc);
@@ -277,6 +223,17 @@ void handle_idle() {
     delay(500);
 }
 
+float convertPing(unsigned long pingvalue)
+{
+  if (pingvalue == 0) return MAX_RANGE_METERS;
+  float fv = ((float)pingvalue) / 100.0f;
+
+  if (fv > MAX_RANGE_METERS) return MAX_RANGE_METERS;
+
+  return fv;
+  
+}
+
 void handle_running() {
 
     StaticJsonBuffer<512> jsonBuffer;
@@ -284,32 +241,37 @@ void handle_running() {
     response["msg"] = "sensor-data";
     
     JsonArray & sensorData = response.createNestedArray("sensor_data");
-    float f = sonar0.read();
-    if (f > 0.05) {
+    float f = convertPing(sonar0.ping_cm());
+    delay(10);
+    {
       JsonObject & sensor0 = sensorData.createNestedObject();
       sensor0["id"] = "0";
       sensor0["range"] = f;
     }
-    f = sonar1.read();
-    if (f > 0.05) {
+    f = convertPing(sonar1.ping_cm());
+    delay(10);
+    {
       JsonObject & sensor0 = sensorData.createNestedObject();
       sensor0["id"] = "1";
       sensor0["range"] = f;
     }
-    f = sonar2.read();
-    if (f > 0.05) {
+    f = convertPing(sonar2.ping_cm());
+    delay(10);
+    {
       JsonObject & sensor0 = sensorData.createNestedObject();
       sensor0["id"] = "2";
       sensor0["range"] = f;
     }
-    f = sonar3.read();
-    if (f > 0.05) {
+    f = convertPing(sonar3.ping_cm());
+    delay(10);
+    {
       JsonObject & sensor0 = sensorData.createNestedObject();
       sensor0["id"] = "3";
       sensor0["range"] = f;
     }
-    f = sonar4.read();
-    if (f > 0.05) {
+    f = convertPing(sonar4.ping_cm());
+    delay(10);
+    {
       JsonObject & sensor0 = sensorData.createNestedObject();
       sensor0["id"] = "4";
       sensor0["range"] = f;
