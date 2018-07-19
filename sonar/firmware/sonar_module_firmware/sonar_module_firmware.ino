@@ -8,24 +8,80 @@
 #include <ArduinoJson.h>
 #include <NewPing.h>
 
-#define MAX_RANGE_METERS (1.5f)
+#define MAX_RANGE_METERS (4.2f)
 
+class NewPing3 : public NewPing {
+private:
+  unsigned long last5[5];
+  uint8_t i;
+  unsigned long ping_cm2();
+public:
+  NewPing3(uint8_t trigger_pin, uint8_t echo_pin, unsigned int max_cm_distance = MAX_SENSOR_DISTANCE);
+  float ping_m();
+};
+
+NewPing3::NewPing3(uint8_t trigger_pin, uint8_t echo_pin, unsigned int max_cm_distance) :
+  NewPing(trigger_pin, echo_pin, max_cm_distance)
+  
+{
+  i = 0;
+  last5[0] = 0;
+  last5[1] = 0;
+  last5[2] = 0;
+  last5[3] = 0;
+  last5[4] = 0;
+}
+
+unsigned long averagevalue(unsigned long *v, int n)
+{
+  unsigned long total = 0;
+  for (int i = 0; i < n; i++) {
+    total += v[i];
+  }
+  return total / n;
+
+}
+
+unsigned long NewPing3::ping_cm2()
+{
+  unsigned long pingvalue = NewPing::ping_cm();
+  last5[i] = pingvalue;
+  i++;
+  i = i % 3;
+  return averagevalue(last5, 3);
+}
+
+float NewPing3::ping_m()
+{
+  unsigned long pingvalue = ping_cm2();
+
+  if (pingvalue == 0) {
+    return MAX_RANGE_METERS;
+  }
+  
+  float fv = ((float)pingvalue) / 100.0f;
+
+  if (fv > MAX_RANGE_METERS) return MAX_RANGE_METERS;
+
+  return fv;
+  
+}
 
 // Supported Messages:
 // {"msg":"subscribe"}
 // {"msg":"unsubscribe"}
 // {"msg":"device-discovery"}
 
-NewPing sonar0(2,3);
-NewPing sonar1(4,5);
-NewPing sonar2(6,7);
-NewPing sonar3(8,9);
-NewPing sonar4(10,11);
+NewPing3 sonar0(2,3);
+NewPing3 sonar1(4,5);
+NewPing3 sonar2(6,7);
+NewPing3 sonar3(8,9);
+NewPing3 sonar4(10,11);
 
 const int STATE_IDLE = 0;
 const int STATE_RUNNING = 1;
 
-int state = 0;
+int state = STATE_IDLE;
 
 boolean on;
 
@@ -223,65 +279,75 @@ void handle_idle() {
     delay(500);
 }
 
-float convertPing(unsigned long pingvalue)
-{
-  if (pingvalue == 0) return MAX_RANGE_METERS;
-  float fv = ((float)pingvalue) / 100.0f;
 
-  if (fv > MAX_RANGE_METERS) return MAX_RANGE_METERS;
 
-  return fv;
-  
-}
+
 
 void handle_running() {
+#ifdef DEBUG_PINGS
+    sonar0.ping_m();
+    delay(30);
+    sonar1.ping_m();
+    delay(30);
+    sonar3.ping_m();
+    delay(30);
+    sonar4.ping_m();
+    delay(30);
+    float f = sonar2.ping_m();
+    delay(30);
+
+    int n = (int)((f/MAX_RANGE_METERS)*60.0f);
+
+    for (int i = 0; i < n; i++) {
+      Serial.print("#");
+    }
+    Serial.println();
+#else
 
     StaticJsonBuffer<512> jsonBuffer;
     JsonObject& response = jsonBuffer.createObject();
     response["msg"] = "sensor-data";
-    
+
     JsonArray & sensorData = response.createNestedArray("sensor_data");
-    float f = convertPing(sonar0.ping_cm());
+    float f = sonar0.ping_m();
     delay(10);
     {
       JsonObject & sensor0 = sensorData.createNestedObject();
       sensor0["id"] = "0";
       sensor0["range"] = f;
     }
-    f = convertPing(sonar1.ping_cm());
+    f = sonar1.ping_m();
     delay(10);
     {
       JsonObject & sensor0 = sensorData.createNestedObject();
       sensor0["id"] = "1";
       sensor0["range"] = f;
     }
-    f = convertPing(sonar2.ping_cm());
+    f = sonar2.ping_m();
     delay(10);
     {
       JsonObject & sensor0 = sensorData.createNestedObject();
       sensor0["id"] = "2";
       sensor0["range"] = f;
     }
-    f = convertPing(sonar3.ping_cm());
+    f = sonar3.ping_m();
     delay(10);
     {
       JsonObject & sensor0 = sensorData.createNestedObject();
       sensor0["id"] = "3";
       sensor0["range"] = f;
     }
-    f = convertPing(sonar4.ping_cm());
+    f = sonar4.ping_m();
     delay(10);
     {
       JsonObject & sensor0 = sensorData.createNestedObject();
       sensor0["id"] = "4";
       sensor0["range"] = f;
     }
-    
 
     response.printTo(Serial);
     Serial.println();
-    
-    delay(50);
+#endif    
 }
 
 
